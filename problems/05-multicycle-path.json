@@ -1,0 +1,100 @@
+{
+  "id": "05-multicycle-path",
+  "title": "32-bit multiplier into accumulator — setup miss at 1.2 GHz",
+  "difficulty": "hard",
+  "tags": ["multicycle_path", "multiplier", "setup"],
+  "description": "# Multiplier accumulator setup violation\n\nThe DSP core has a 32-bit multiplier feeding an accumulator register. At 1.2 GHz (833 ps period), `report_timing` flags -350 ps on `mult_in_reg/Q -> acc_reg/D`.\n\nThe architect confirms: software always issues a NOP after a multiply, so the accumulator doesn't need to capture the multiplier result in the same cycle — it has 2 cycles.\n\nThe netlist is fine. Fix it in SDC.\n\n**Note:** when you apply a multicycle setup exception, you must also think about hold — but for this problem, pick the setup fix and you'll score.",
+  "design": {
+    "name": "mult_acc",
+    "cells": [
+      { "id": "mult_in_reg", "type": "DFFX2", "isSequential": true, "area": 6.2, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.003 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 150, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 80, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 33, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "mult_pp", "type": "MULT_PP", "area": 48.0, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.004 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 420, "sense": "non_unate" }
+      ] },
+      { "id": "mult_csa", "type": "CSA_TREE", "area": 36.0, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.004 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 380, "sense": "non_unate" }
+      ] },
+      { "id": "mult_cpa", "type": "CPA_32", "area": 28.0, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.004 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 260, "sense": "non_unate" }
+      ] },
+      { "id": "acc_reg", "type": "DFFX2", "isSequential": true, "area": 6.2, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.003 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 150, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 82, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 34, "sense": "non_unate", "check": "hold" }
+      ] }
+    ],
+    "nets": [
+      { "id": "n_mult_in_q", "driver": "mult_in_reg/Q", "loads": ["mult_pp/A"], "resistance": 50, "capacitance": 0.014, "wireDelay": 30 },
+      { "id": "n_pp_y", "driver": "mult_pp/Y", "loads": ["mult_csa/A"], "resistance": 55, "capacitance": 0.016, "wireDelay": 35 },
+      { "id": "n_csa_y", "driver": "mult_csa/Y", "loads": ["mult_cpa/A"], "resistance": 58, "capacitance": 0.018, "wireDelay": 40 },
+      { "id": "n_cpa_y", "driver": "mult_cpa/Y", "loads": ["acc_reg/D"], "resistance": 52, "capacitance": 0.015, "wireDelay": 32 },
+      { "id": "clk_net", "driver": "clk", "loads": ["mult_in_reg/CK", "acc_reg/CK"], "wireDelay": 0 }
+    ],
+    "clocks": [
+      { "id": "clk", "period": 0.833, "source": "clk", "waveform": [0, 0.416], "uncertainty": 0.04, "latency": 0.1 }
+    ],
+    "constraints": [],
+    "ports": [{ "id": "clk", "direction": "in" }]
+  },
+  "reportedViolation": {
+    "type": "setup",
+    "startpoint": "mult_in_reg/Q",
+    "endpoint": "acc_reg/D",
+    "slack": -0.35,
+    "summary": "setup VIOLATED (-0.350 ns) on mult_in_reg/Q -> acc_reg/D"
+  },
+  "validCommands": [
+    "report_timing", "report_clocks", "report_exceptions",
+    "get_cells", "get_pins", "get_nets", "all_registers"
+  ],
+  "solution": {
+    "rootCauseOptions": [
+      { "id": "rc1", "label": "The multiplier datapath is architecturally two cycles — a multicycle_path exception is missing", "correct": true },
+      { "id": "rc2", "label": "mult_pp, mult_csa, mult_cpa all need resizing", "correct": false },
+      { "id": "rc3", "label": "Wire delays on n_csa_y are too high and need routing cleanup", "correct": false },
+      { "id": "rc4", "label": "The path is actually a false path and should be excluded entirely", "correct": false }
+    ],
+    "acceptedFixes": [
+      {
+        "id": "mcp_2cycle",
+        "description": "Add `set_multicycle_path 2 -setup -from mult_in_reg/Q -to acc_reg/D` plus the matching `-hold 1` to keep hold checks aligned",
+        "category": "change_constraint",
+        "ppaCost": { "area": 0.0, "power": 0.0, "timing": 0.0 },
+        "slackDelta": 0.90
+      },
+      {
+        "id": "pipeline_mult",
+        "description": "Insert a pipeline stage inside the multiplier (adds a cycle of latency but relaxes each stage)",
+        "category": "ecc_retime",
+        "ppaCost": { "area": 0.08, "power": 0.06, "timing": 0.0 },
+        "slackDelta": 0.55
+      }
+    ]
+  },
+  "hintTree": {
+    "nudge": "The architect gave you extra information about software behavior. That's always a hint about timing exceptions.",
+    "hint": "Software issues a NOP after the multiply — meaning the result has two cycles to stabilize before the accumulator needs it. Which SDC construct captures that?",
+    "walkthrough": "Run `report_exceptions` — empty. The path is ~1.53 ns long; a single cycle is 833 ps. That's ~1.83 cycles. Apply `set_multicycle_path 2 -setup -from mult_in_reg/Q -to acc_reg/D`. Always pair with `set_multicycle_path 1 -hold ...` so hold checks stay aligned. Real netlist fix (pipelining) also works but costs area and changes latency."
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "id": "04-clock-skew",
+  "title": "Divided clock domain crossing at 2 GHz",
+  "difficulty": "hard",
+  "tags": ["clock_skew", "clock_tree", "setup"],
+  "description": "# Divided clock skew problem\n\nA high-speed datapath runs at 2 GHz (500 ps period). A generated clock `clk_div2` runs at half-rate off the main clock. The worst setup violation is -85 ps on `stage1_reg/Q -> stage2_reg/D`, where `stage1_reg` is on `clk` and `stage2_reg` is on `clk_div2`.\n\nBoth clocks come from the same root, but `clk_div2` has an extra divider flop in its generation path. Uncertainty 30 ps.\n\n**Your job:** figure out whether this is a data path problem or a clock network problem.",
+  "design": {
+    "name": "divclk_domain",
+    "cells": [
+      { "id": "stage1_reg", "type": "DFFX2", "isSequential": true, "area": 6.2, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.003 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 140, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 75, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 30, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "dp_xor", "type": "XOR2X2", "area": 3.6, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "B", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 110, "sense": "non_unate" },
+        { "from": "B", "to": "Y", "delay": 112, "sense": "non_unate" }
+      ] },
+      { "id": "dp_and", "type": "AND2X2", "area": 2.8, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "B", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 95, "sense": "positive_unate" },
+        { "from": "B", "to": "Y", "delay": 98, "sense": "positive_unate" }
+      ] },
+      { "id": "stage2_reg", "type": "DFFX1", "isSequential": true, "area": 5.8, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.002 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 160, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 85, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 35, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "div_flop", "type": "DFFX1", "isSequential": true, "area": 5.8, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.002 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 160, "sense": "positive_unate" }
+      ] },
+      { "id": "ck_buf_div", "type": "CKBUFX4", "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.004 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [{ "from": "A", "to": "Y", "delay": 48, "sense": "positive_unate" }] }
+    ],
+    "nets": [
+      { "id": "n_s1_q", "driver": "stage1_reg/Q", "loads": ["dp_xor/A"], "resistance": 45, "capacitance": 0.012, "wireDelay": 25 },
+      { "id": "n_xor_y", "driver": "dp_xor/Y", "loads": ["dp_and/A"], "resistance": 40, "capacitance": 0.010, "wireDelay": 22 },
+      { "id": "n_and_y", "driver": "dp_and/Y", "loads": ["stage2_reg/D"], "resistance": 42, "capacitance": 0.011, "wireDelay": 24 },
+      { "id": "clk_main", "driver": "clk", "loads": ["stage1_reg/CK", "div_flop/CK"], "wireDelay": 15 },
+      { "id": "div_q", "driver": "div_flop/Q", "loads": ["ck_buf_div/A"], "wireDelay": 30 },
+      { "id": "clk_div2_net", "driver": "ck_buf_div/Y", "loads": ["stage2_reg/CK"], "wireDelay": 25 }
+    ],
+    "clocks": [
+      { "id": "clk", "period": 0.5, "source": "clk", "waveform": [0, 0.25], "uncertainty": 0.03, "latency": 0.08 },
+      { "id": "clk_div2", "period": 1.0, "source": "ck_buf_div/Y", "waveform": [0, 0.5], "uncertainty": 0.03, "latency": 0 }
+    ],
+    "constraints": [],
+    "ports": [{ "id": "clk", "direction": "in" }]
+  },
+  "reportedViolation": {
+    "type": "setup",
+    "startpoint": "stage1_reg/Q",
+    "endpoint": "stage2_reg/D",
+    "slack": -0.085,
+    "summary": "setup VIOLATED (-0.085 ns) on stage1_reg/Q -> stage2_reg/D (clk -> clk_div2)"
+  },
+  "validCommands": [
+    "report_timing", "report_clocks", "report_clock_network",
+    "get_cells", "get_pins", "get_nets", "report_parasitics",
+    "report_exceptions", "all_registers"
+  ],
+  "solution": {
+    "rootCauseOptions": [
+      { "id": "rc1", "label": "Insertion delay of clk_div2 lags clk by ~238 ps (div_flop CK→Q + buffer + wires), so the capture edge at stage2_reg arrives too late relative to launch", "correct": true },
+      { "id": "rc2", "label": "The XOR/AND chain in the datapath is too slow", "correct": false },
+      { "id": "rc3", "label": "Clock uncertainty is over-budgeted", "correct": false },
+      { "id": "rc4", "label": "stage1_reg drive strength is too low", "correct": false }
+    ],
+    "acceptedFixes": [
+      {
+        "id": "balance_div_branch",
+        "description": "Add matching buffers on the main clk branch to stage1_reg to equalize insertion delays across domains",
+        "category": "useful_skew",
+        "ppaCost": { "area": 0.04, "power": 0.03, "timing": 0.0 },
+        "slackDelta": 0.12
+      },
+      {
+        "id": "size_div_buf",
+        "description": "Replace CKBUFX4 with CKBUFX8 and shorten the clk_div2 net to reduce insertion delay",
+        "category": "size_up",
+        "ppaCost": { "area": 0.02, "power": 0.02, "timing": 0.0 },
+        "slackDelta": 0.10
+      },
+      {
+        "id": "set_clock_latency",
+        "description": "Apply `set_clock_latency -source 0.1 [get_clocks clk_div2]` to model the generated-clock insertion delay explicitly and give the tool budget",
+        "category": "change_constraint",
+        "ppaCost": { "area": 0.0, "power": 0.0, "timing": 0.0 },
+        "slackDelta": 0.09
+      }
+    ]
+  },
+  "hintTree": {
+    "nudge": "When the violating path crosses between two related clocks, the first question isn't 'is the data path too slow' — it's something about the clocks themselves.",
+    "hint": "Look at the clock network for both `clk` and `clk_div2`. Pay attention to how clk_div2 is generated and how many stages sit between the root clock and stage2_reg/CK.",
+    "walkthrough": "`report_clock_network -clock clk` shows stage1_reg gets clk at ~0.095 ns. `report_clock_network -clock clk_div2` shows stage2_reg gets it at ~0.333 ns (clk → div_flop CK→Q 0.16 + net 0.03 + CKBUFX4 0.048 + net 0.025 + the original clk latency 0.08). That 238 ps of extra insertion delay eats the budget. Fix: rebalance the main-clk branch to equalize, or set a source latency so STA knows about the generated-clock delay."
+  }
+}

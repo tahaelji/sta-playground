@@ -1,0 +1,146 @@
+{
+  "id": "01-setup-violation",
+  "title": "AES round datapath — worst slack on state register",
+  "difficulty": "medium",
+  "tags": ["setup", "datapath", "sizing"],
+  "description": "# AES round datapath\n\nYou've inherited an AES-128 round implementation during timing closure. Synthesis reports a **setup violation** on the state register feedback path at 1.0 GHz (1000 ps period). The violation is -180 ps on the worst path from `state_reg[7]/Q` to `state_reg[3]/D`.\n\nThe design went through synthesis with default effort. Clock uncertainty is 50 ps, insertion delay is 100 ps. No timing exceptions are currently defined.\n\n**Your job:** find the root cause and apply a fix. You have a restricted command palette — think before you spend investigation budget.",
+  "design": {
+    "name": "aes_round",
+    "cells": [
+      { "id": "state_reg_7", "type": "DFFRX2", "isSequential": true, "area": 6.2, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.003 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 180, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 85, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 35, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "sbox_mux", "type": "MUX4X1", "area": 4.8, "pins": [
+        { "id": "I0", "direction": "in", "capacitance": 0.003 },
+        { "id": "I1", "direction": "in", "capacitance": 0.003 },
+        { "id": "I2", "direction": "in", "capacitance": 0.003 },
+        { "id": "I3", "direction": "in", "capacitance": 0.003 },
+        { "id": "S0", "direction": "in", "capacitance": 0.002 },
+        { "id": "S1", "direction": "in", "capacitance": 0.002 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "I0", "to": "Y", "delay": 180, "sense": "positive_unate" },
+        { "from": "I1", "to": "Y", "delay": 185, "sense": "positive_unate" },
+        { "from": "I2", "to": "Y", "delay": 190, "sense": "positive_unate" },
+        { "from": "I3", "to": "Y", "delay": 195, "sense": "positive_unate" }
+      ] },
+      { "id": "sbox_lut", "type": "LUT8X1", "area": 12.4, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.004 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 320, "sense": "non_unate" }
+      ] },
+      { "id": "mc_xor1", "type": "XOR2X1", "area": 3.1, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "B", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 130, "sense": "non_unate" },
+        { "from": "B", "to": "Y", "delay": 135, "sense": "non_unate" }
+      ] },
+      { "id": "mc_xor2", "type": "XOR2X1", "area": 3.1, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "B", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 128, "sense": "non_unate" },
+        { "from": "B", "to": "Y", "delay": 132, "sense": "non_unate" }
+      ] },
+      { "id": "key_xor", "type": "XOR2X1", "area": 3.1, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "B", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 125, "sense": "non_unate" },
+        { "from": "B", "to": "Y", "delay": 128, "sense": "non_unate" }
+      ] },
+      { "id": "state_reg_3", "type": "DFFRX1", "isSequential": true, "area": 5.8, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.002 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 180, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 95, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 40, "sense": "non_unate", "check": "hold" }
+      ] }
+    ],
+    "nets": [
+      { "id": "n_state7_q", "driver": "state_reg_7/Q", "loads": ["sbox_mux/I2"], "resistance": 48, "capacitance": 0.014, "wireDelay": 35 },
+      { "id": "n_mux_y", "driver": "sbox_mux/Y", "loads": ["sbox_lut/A"], "resistance": 72, "capacitance": 0.028, "wireDelay": 85 },
+      { "id": "n_sbox_y", "driver": "sbox_lut/Y", "loads": ["mc_xor1/A"], "resistance": 55, "capacitance": 0.018, "wireDelay": 55 },
+      { "id": "n_mc1_y", "driver": "mc_xor1/Y", "loads": ["mc_xor2/A"], "resistance": 42, "capacitance": 0.012, "wireDelay": 32 },
+      { "id": "n_mc2_y", "driver": "mc_xor2/Y", "loads": ["key_xor/A"], "resistance": 38, "capacitance": 0.011, "wireDelay": 28 },
+      { "id": "n_key_y", "driver": "key_xor/Y", "loads": ["state_reg_3/D"], "resistance": 45, "capacitance": 0.013, "wireDelay": 30 },
+      { "id": "clk_net", "driver": "clk", "loads": ["state_reg_7/CK", "state_reg_3/CK"], "wireDelay": 0 }
+    ],
+    "clocks": [
+      { "id": "clk", "period": 1.0, "source": "clk", "waveform": [0, 0.5], "uncertainty": 0.05, "latency": 0.1 }
+    ],
+    "constraints": [
+      { "kind": "input_delay", "clock": "clk", "port": "state_reg_7/D", "delay": 0.1 },
+      { "kind": "output_delay", "clock": "clk", "port": "state_reg_3/Q", "delay": 0.1 }
+    ],
+    "ports": [{ "id": "clk", "direction": "in" }]
+  },
+  "reportedViolation": {
+    "type": "setup",
+    "startpoint": "state_reg_7/Q",
+    "endpoint": "state_reg_3/D",
+    "slack": -0.18,
+    "clockPath": "launch",
+    "summary": "setup VIOLATED (-0.180 ns) on state_reg_7/Q -> state_reg_3/D"
+  },
+  "validCommands": [
+    "report_timing",
+    "report_clocks",
+    "report_clock_network",
+    "get_cells",
+    "get_pins",
+    "get_nets",
+    "report_parasitics",
+    "report_exceptions",
+    "all_registers"
+  ],
+  "solution": {
+    "rootCauseOptions": [
+      { "id": "rc1", "label": "sbox_mux drives a high-capacitance net into a heavy LUT input (n_mux_y has 85 ps of wire delay and feeds a 0.004 pF pin)", "correct": true },
+      { "id": "rc2", "label": "Clock skew between state_reg_7 and state_reg_3", "correct": false },
+      { "id": "rc3", "label": "Missing false_path on the state feedback loop", "correct": false },
+      { "id": "rc4", "label": "Hold violation disguised as setup", "correct": false }
+    ],
+    "acceptedFixes": [
+      {
+        "id": "size_up_mux",
+        "description": "Size sbox_mux from MUX4X1 to MUX4X4 to drive n_mux_y faster",
+        "category": "size_up",
+        "ppaCost": { "area": 0.12, "power": 0.08, "timing": -0.2 },
+        "slackDelta": 0.22
+      },
+      {
+        "id": "buffer_insert",
+        "description": "Insert a BUFX4 on n_mux_y between sbox_mux and sbox_lut",
+        "category": "buffer_insert",
+        "ppaCost": { "area": 0.05, "power": 0.04, "timing": -0.12 },
+        "slackDelta": 0.15
+      },
+      {
+        "id": "useful_skew",
+        "description": "Apply useful skew: delay capture clock on state_reg_3 by 100 ps",
+        "category": "useful_skew",
+        "ppaCost": { "area": 0.02, "power": 0.01, "timing": -0.05 },
+        "slackDelta": 0.10
+      }
+    ]
+  },
+  "hintTree": {
+    "nudge": "Before changing anything, look at where the delay is accumulating. Which single segment of the data path contributes the most?",
+    "hint": "Compare cell delays (arcs) vs net delays. You should see one net with unusually high wire delay — investigate what's driving it and what it's feeding.",
+    "walkthrough": "Run `report_timing -from state_reg_7/Q -to state_reg_3/D`. Walk the path: the sbox_mux -> sbox_lut segment has 85 ps of wire delay on n_mux_y, which is dominant. `get_nets -pattern n_mux_y` confirms high capacitance (0.028 pF). The MUX4X1 driver is too weak. Pick size_up_mux (best slack recovery) or buffer_insert (smaller PPA hit)."
+  }
+}

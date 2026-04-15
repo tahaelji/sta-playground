@@ -1,0 +1,100 @@
+{
+  "id": "02-hold-violation",
+  "title": "Scan chain hold violation after CTS",
+  "difficulty": "medium",
+  "tags": ["hold", "cts", "scan"],
+  "description": "# Scan chain hold violation\n\nPost-CTS (clock tree synthesis), a hold violation appeared on the scan chain between two adjacent flops `scan_reg_a` and `scan_reg_b`. Slack is -60 ps. The design met hold in pre-CTS ideal clocks.\n\nThere's no combinational logic between the two flops — just a short scan wire. Clock period is 2.0 ns, hold check is at cycle 0. Uncertainty 40 ps.\n\n**Your job:** figure out why a short combinational path suddenly can't meet hold, and pick a fix.",
+  "design": {
+    "name": "scan_chain",
+    "cells": [
+      { "id": "scan_reg_a", "type": "SDFFX1", "isSequential": true, "area": 5.2, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.002 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.003 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 95, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 75, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 45, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "scan_reg_b", "type": "SDFFX1", "isSequential": true, "area": 5.2, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.002 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.003 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 95, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 75, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 45, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "clk_buf_1", "type": "CKBUFX2", "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [{ "from": "A", "to": "Y", "delay": 55, "sense": "positive_unate" }] },
+      { "id": "clk_buf_2a", "type": "CKBUFX2", "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [{ "from": "A", "to": "Y", "delay": 55, "sense": "positive_unate" }] },
+      { "id": "clk_buf_2b", "type": "CKBUFX2", "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [{ "from": "A", "to": "Y", "delay": 55, "sense": "positive_unate" }] },
+      { "id": "clk_buf_3b", "type": "CKBUFX2", "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [{ "from": "A", "to": "Y", "delay": 55, "sense": "positive_unate" }] }
+    ],
+    "nets": [
+      { "id": "n_scan_q", "driver": "scan_reg_a/Q", "loads": ["scan_reg_b/D"], "resistance": 35, "capacitance": 0.008, "wireDelay": 18 },
+      { "id": "clk_root", "driver": "clk", "loads": ["clk_buf_1/A"], "wireDelay": 10 },
+      { "id": "clk_1_y", "driver": "clk_buf_1/Y", "loads": ["clk_buf_2a/A", "clk_buf_2b/A"], "wireDelay": 15 },
+      { "id": "clk_2a_y", "driver": "clk_buf_2a/Y", "loads": ["scan_reg_a/CK"], "wireDelay": 20 },
+      { "id": "clk_2b_y", "driver": "clk_buf_2b/Y", "loads": ["clk_buf_3b/A"], "wireDelay": 20 },
+      { "id": "clk_3b_y", "driver": "clk_buf_3b/Y", "loads": ["scan_reg_b/CK"], "wireDelay": 20 }
+    ],
+    "clocks": [
+      { "id": "clk", "period": 2.0, "source": "clk", "waveform": [0, 1.0], "uncertainty": 0.04, "latency": 0 }
+    ],
+    "constraints": [],
+    "ports": [{ "id": "clk", "direction": "in" }]
+  },
+  "reportedViolation": {
+    "type": "hold",
+    "startpoint": "scan_reg_a/Q",
+    "endpoint": "scan_reg_b/D",
+    "slack": -0.06,
+    "summary": "hold VIOLATED (-0.060 ns) on scan_reg_a/Q -> scan_reg_b/D"
+  },
+  "validCommands": [
+    "report_timing", "report_clocks", "report_clock_network",
+    "get_cells", "get_pins", "get_nets", "report_parasitics",
+    "report_exceptions", "all_registers"
+  ],
+  "solution": {
+    "rootCauseOptions": [
+      { "id": "rc1", "label": "Clock skew: scan_reg_b's clock path has one more buffer than scan_reg_a, so its capture edge arrives later — the short data path reaches D before hold is guaranteed", "correct": true },
+      { "id": "rc2", "label": "The combinational data path is too long for setup", "correct": false },
+      { "id": "rc3", "label": "Scan flops are too weak to drive the next stage", "correct": false },
+      { "id": "rc4", "label": "Clock uncertainty budget is wrong", "correct": false }
+    ],
+    "acceptedFixes": [
+      {
+        "id": "insert_delay_buf",
+        "description": "Insert a delay buffer on n_scan_q between scan_reg_a and scan_reg_b",
+        "category": "buffer_insert",
+        "ppaCost": { "area": 0.02, "power": 0.01, "timing": 0.0 },
+        "slackDelta": 0.08
+      },
+      {
+        "id": "rebalance_cts",
+        "description": "Rebalance clock tree: remove one buffer from scan_reg_b branch to equalize insertion delay",
+        "category": "useful_skew",
+        "ppaCost": { "area": -0.01, "power": -0.02, "timing": 0.0 },
+        "slackDelta": 0.07
+      }
+    ]
+  },
+  "hintTree": {
+    "nudge": "Pre-CTS it met hold. Post-CTS it doesn't. What changed between those two timing runs?",
+    "hint": "Hold is violated when data arrives before the capture edge is ready. Check the clock network — specifically the insertion delay at each flop's clock pin.",
+    "walkthrough": "Run `report_clock_network -clock clk`. scan_reg_a has insertion delay ~0.14 ns (clk → buf1 → buf2a → a); scan_reg_b has ~0.195 ns (clk → buf1 → buf2b → buf3b → b). That 55 ps skew plus the 18 ps wire on n_scan_q means data arrives before capture can latch reliably. Fix: insert a delay buffer on the data path, or rebalance the clock tree."
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "id": "03-missing-false-path",
+  "title": "Config register into async control — spurious setup violation",
+  "difficulty": "hard",
+  "tags": ["false_path", "cdc", "sdc"],
+  "description": "# Spurious setup violation on config path\n\nYou're seeing a -420 ps setup violation from `cfg_reg/Q` into `mode_ctrl/D`. But the team lead tells you this path is *never* clocked dynamically — `cfg_reg` is only written during boot, and `mode_ctrl` samples it after a software-driven wait of thousands of cycles.\n\nThere's no combinational logic missing. The path is real, but it shouldn't be timed at 1 cycle.\n\nClock period is 0.8 ns. Uncertainty 50 ps. Investigate the constraint environment — the fix is in SDC, not in the netlist.",
+  "design": {
+    "name": "cfg_to_ctrl",
+    "cells": [
+      { "id": "cfg_reg", "type": "DFFX2", "isSequential": true, "area": 6.0, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.003 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 160, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 80, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 35, "sense": "non_unate", "check": "hold" }
+      ] },
+      { "id": "decode_and", "type": "AND4X1", "area": 4.2, "pins": [
+        { "id": "A", "direction": "in", "capacitance": 0.003 },
+        { "id": "B", "direction": "in", "capacitance": 0.003 },
+        { "id": "C", "direction": "in", "capacitance": 0.003 },
+        { "id": "D", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "A", "to": "Y", "delay": 220, "sense": "positive_unate" },
+        { "from": "B", "to": "Y", "delay": 225, "sense": "positive_unate" },
+        { "from": "C", "to": "Y", "delay": 230, "sense": "positive_unate" },
+        { "from": "D", "to": "Y", "delay": 235, "sense": "positive_unate" }
+      ] },
+      { "id": "priority_mux", "type": "MUX8X1", "area": 7.5, "pins": [
+        { "id": "I0", "direction": "in", "capacitance": 0.003 },
+        { "id": "S", "direction": "in", "capacitance": 0.003 },
+        { "id": "Y", "direction": "out" }
+      ], "arcs": [
+        { "from": "I0", "to": "Y", "delay": 250, "sense": "positive_unate" }
+      ] },
+      { "id": "mode_ctrl", "type": "DFFX1", "isSequential": true, "area": 5.5, "pins": [
+        { "id": "D", "direction": "in", "capacitance": 0.002 },
+        { "id": "Q", "direction": "out" },
+        { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+      ], "arcs": [
+        { "from": "CK", "to": "Q", "delay": 160, "sense": "positive_unate" },
+        { "from": "D", "to": "D", "delay": 90, "sense": "non_unate", "check": "setup" },
+        { "from": "D", "to": "D", "delay": 38, "sense": "non_unate", "check": "hold" }
+      ] }
+    ],
+    "nets": [
+      { "id": "n_cfg_q", "driver": "cfg_reg/Q", "loads": ["decode_and/A"], "resistance": 60, "capacitance": 0.018, "wireDelay": 45 },
+      { "id": "n_and_y", "driver": "decode_and/Y", "loads": ["priority_mux/I0"], "resistance": 55, "capacitance": 0.016, "wireDelay": 40 },
+      { "id": "n_mux_y", "driver": "priority_mux/Y", "loads": ["mode_ctrl/D"], "resistance": 50, "capacitance": 0.014, "wireDelay": 35 },
+      { "id": "clk_net", "driver": "clk", "loads": ["cfg_reg/CK", "mode_ctrl/CK"], "wireDelay": 0 }
+    ],
+    "clocks": [
+      { "id": "clk", "period": 0.8, "source": "clk", "waveform": [0, 0.4], "uncertainty": 0.05, "latency": 0.1 }
+    ],
+    "constraints": [],
+    "ports": [{ "id": "clk", "direction": "in" }]
+  },
+  "reportedViolation": {
+    "type": "setup",
+    "startpoint": "cfg_reg/Q",
+    "endpoint": "mode_ctrl/D",
+    "slack": -0.42,
+    "summary": "setup VIOLATED (-0.420 ns) on cfg_reg/Q -> mode_ctrl/D"
+  },
+  "validCommands": [
+    "report_timing", "report_clocks", "report_exceptions",
+    "get_cells", "get_pins", "get_nets", "all_registers"
+  ],
+  "solution": {
+    "rootCauseOptions": [
+      { "id": "rc1", "label": "No timing exception defined: this is a quasi-static path that should carry a false_path or multicycle_path exception", "correct": true },
+      { "id": "rc2", "label": "decode_and and priority_mux are too slow and need resizing", "correct": false },
+      { "id": "rc3", "label": "The path has a missing buffer on n_cfg_q", "correct": false },
+      { "id": "rc4", "label": "Clock uncertainty is too pessimistic", "correct": false }
+    ],
+    "acceptedFixes": [
+      {
+        "id": "add_false_path",
+        "description": "Add `set_false_path -from [get_pins cfg_reg/Q] -to [get_pins mode_ctrl/D]` to SDC",
+        "category": "change_constraint",
+        "ppaCost": { "area": 0.0, "power": 0.0, "timing": 0.0 },
+        "slackDelta": 0.60
+      },
+      {
+        "id": "add_multicycle",
+        "description": "Add `set_multicycle_path 4 -setup -from cfg_reg/Q -to mode_ctrl/D` (with matching hold)",
+        "category": "change_constraint",
+        "ppaCost": { "area": 0.0, "power": 0.0, "timing": 0.0 },
+        "slackDelta": 0.55
+      }
+    ]
+  },
+  "hintTree": {
+    "nudge": "You can see the path is ~1.2 ns long but the clock is 0.8 ns. Before touching the netlist, ask yourself: should this path be timed single-cycle at all?",
+    "hint": "The lead said `cfg_reg` is written once at boot and read after thousands of cycles. Look at `report_exceptions` — what's currently constraining this path?",
+    "walkthrough": "Run `report_exceptions` — the output is empty. This path has no false_path or multicycle_path exception. Since `cfg_reg` is quasi-static, add `set_false_path -from cfg_reg/Q -to mode_ctrl/D`. If you want belt-and-suspenders safety, a multicycle_path with a generous N also works. No netlist changes needed."
+  }
+}
