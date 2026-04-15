@@ -2,6 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getProblem } from "@/lib/problems/loader";
 import { chatComplete } from "@/lib/tutor/client";
 import { SYSTEM_PROMPT, buildUserMessage } from "@/lib/tutor/prompts";
+import type { HintTree } from "@/lib/sta/types";
+
+function staticHint(tree: HintTree, level: number): string {
+  if (level <= 0) return tree.nudge;
+  if (level === 1) return tree.hint;
+  return tree.walkthrough;
+}
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as {
@@ -21,16 +28,27 @@ export async function POST(req: NextRequest) {
   const level = Math.max(0, Math.min(2, body.level ?? 0));
   const history = body.history ?? [];
 
-  try {
-    const hint = await chatComplete([
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserMessage(problem, level, history) },
-    ]);
-    return NextResponse.json({ hint });
-  } catch (e) {
-    return NextResponse.json(
-      { error: (e as Error).message },
-      { status: 500 },
-    );
+  // If a tutor backend is configured, use it with the hintTree as grounding.
+  // Otherwise fall back to the author-written hint tiers — this is the
+  // default in prod and gives deterministic, guardrailed output for free.
+  if (process.env.TUTOR_BASE_URL) {
+    try {
+      const hint = await chatComplete([
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserMessage(problem, level, history) },
+      ]);
+      return NextResponse.json({ hint, source: "llm" });
+    } catch (e) {
+      return NextResponse.json({
+        hint: staticHint(problem.hintTree, level),
+        source: "static",
+        warning: `llm unavailable: ${(e as Error).message}`,
+      });
+    }
   }
+
+  return NextResponse.json({
+    hint: staticHint(problem.hintTree, level),
+    source: "static",
+  });
 }
