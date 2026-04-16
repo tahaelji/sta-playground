@@ -62,6 +62,9 @@ export interface PathSegment {
   to: string;
   delay: number;              // ns
   description: string;
+  fanout?: number;
+  transition?: number;        // ns, output slew
+  edge?: "r" | "f";
 }
 
 export interface TimingPath {
@@ -84,13 +87,17 @@ function walkCombinational(
   startPinId: string,
   endPinId: string,
   visited = new Set<string>(),
+  lastEdge: "r" | "f" = "r",
+  lastTransition = 0.020,
 ): PathSegment[] | null {
   if (startPinId === endPinId) return [];
   if (visited.has(startPinId)) return null;
   visited.add(startPinId);
 
-  const net = netByPin(design, startPinId);
-  if (!net || net.driver !== startPinId) return null;
+  const net = design.nets.find((n) => n.driver === startPinId);
+  if (!net) return null;
+
+  const fanout = net.loads.length;
 
   for (const loadPinId of net.loads) {
     const netDelay = net.wireDelay ?? 0;
@@ -98,8 +105,11 @@ function walkCombinational(
       kind: "net",
       from: startPinId,
       to: loadPinId,
-      delay: netDelay / 1000,            // wire delay stored in ps
-      description: `net ${net.id}`,
+      delay: netDelay / 1000,
+      description: `${loadPinId} (net)`,
+      fanout,
+      transition: lastTransition + (netDelay / 1000) * 0.3,
+      edge: lastEdge,
     };
 
     if (loadPinId === endPinId) {
@@ -115,19 +125,42 @@ function walkCombinational(
       const arcToPin = `${cellId}/${arc.to}`;
       if (arcFromPin !== loadPinId) continue;
 
+      const outEdge: "r" | "f" =
+        arc.outputEdge ??
+        (arc.sense === "negative_unate"
+          ? lastEdge === "r" ? "f" : "r"
+          : lastEdge);
+      const outTrans = (arc.outputTransition ?? arc.delay * 0.35) / 1000;
+
       const arcSeg: PathSegment = {
         kind: "cell_arc",
         from: arcFromPin,
         to: arcToPin,
         delay: arc.delay / 1000,
-        description: `${cell.type} ${cell.id} (${arc.from} -> ${arc.to})`,
+        description: `${arcToPin} (${cell.type})`,
+        transition: outTrans,
+        edge: outEdge,
       };
 
-      const rest = walkCombinational(design, arcToPin, endPinId, visited);
+      const rest = walkCombinational(design, arcToPin, endPinId, visited, outEdge, outTrans);
       if (rest) return [netSeg, arcSeg, ...rest];
     }
   }
   return null;
+}
+
+function walkClockPath(
+  design: Design,
+  clock: Clock,
+  sinkCellId: string,
+): PathSegment[] {
+  const sinkCell = cellById(design, sinkCellId);
+  if (!sinkCell) return [];
+  const ckPin = sinkCell.pins.find((p) => p.isClock);
+  if (!ckPin) return [];
+  const target = `${sinkCellId}/${ckPin.id.split("/").pop()}`;
+  const path = walkCombinational(design, clock.source, target);
+  return path ?? [];
 }
 
 // Walk the clock network from clock source to a sequential cell's clock pin,
@@ -276,18 +309,28 @@ function formatReportTiming(ctx: StaContext, args: Record<string, unknown>): str
   const path = computePath(ctx.design, from, to, checkType);
   const baseSlack = effectiveSlack(ctx);
 
+  const { cellId: startCellId } = splitPin(from);
+  const { cellId: endCellId } = splitPin(to);
+  const startCell = cellById(ctx.design, startCellId);
+  const endCell = cellById(ctx.design, endCellId);
+  const launchClock = path?.launchClock ?? ctx.design.clocks[0];
+  const captureClock = path?.captureClock ?? ctx.design.clocks[0];
+
   const header = [
     "****************************************",
-    `Report   : timing`,
-    `           -delay_type ${checkType === "setup" ? "max" : "min"}`,
-    `           -from ${from}`,
-    `           -to ${to}`,
-    `Design   : ${ctx.design.name}`,
+    `Report : timing`,
+    `        -path_type full_clock_expanded`,
+    `        -delay_type ${checkType === "setup" ? "max" : "min"}`,
+    `        -from ${from}`,
+    `        -to ${to}`,
+    `Design : ${ctx.design.name}`,
     "****************************************",
     "",
     `Startpoint: ${from}`,
+    `            (${startCell?.type ?? "?"} clocked by ${launchClock?.id ?? "?"})`,
     `Endpoint:   ${to}`,
-    `Path Group: ${path?.launchClock?.id ?? "**default**"}`,
+    `            (${endCell?.type ?? "?"} clocked by ${captureClock?.id ?? "?"})`,
+    `Path Group: ${launchClock?.id ?? "**default**"}`,
     `Path Type:  ${checkType === "setup" ? "max" : "min"}`,
     "",
   ];
@@ -301,22 +344,86 @@ function formatReportTiming(ctx: StaContext, args: Record<string, unknown>): str
     ].join("\n");
   }
 
-  const rows: string[] = [
-    `  ${pad("Point", 40)}  ${pad("Incr", 10)}  ${pad("Path", 10)}`,
-    `  ${"-".repeat(40)}  ${"-".repeat(10)}  ${"-".repeat(10)}`,
-  ];
-  let running = path.launchClock ? clockArrivalAt(ctx.design, path.launchClock, splitPin(from).cellId) : 0;
-  rows.push(`  ${pad("clock " + (path.launchClock?.id ?? ""), 40)}  ${pad(fmt(running), 10)}  ${pad(fmt(running), 10)} r`);
-  rows.push(`  ${pad(from + " (launch)", 40)}  ${pad(fmt(0), 10)}  ${pad(fmt(running), 10)} r`);
+  const P = (s: string, n: number) => s.padEnd(n);
+  const R = (s: string, n: number) => s.padStart(n);
+
+  const colHdr = `  ${P("Point", 42)} ${R("Fanout", 7)} ${R("Trans", 8)} ${R("Incr", 8)} ${R("Path", 8)}`;
+  const colSep = `  ${"-".repeat(42)} ${"-".repeat(7)} ${"-".repeat(8)} ${"-".repeat(8)} ${"-".repeat(8)}`;
+
+  const rows: string[] = [colHdr, colSep];
+
+  // --- launch clock path (expanded) ---
+  let running = 0;
+  const launchLatency = launchClock?.latency ?? 0;
+  rows.push(`  ${P("clock " + (launchClock?.id ?? "") + " (rise edge)", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(0), 8)} ${R(fmt(0), 8)}`);
+  if (launchLatency > 0) {
+    running += launchLatency;
+    rows.push(`  ${P("clock source latency", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(launchLatency), 8)} ${R(fmt(running), 8)}`);
+  }
+  const launchClkSegs = walkClockPath(ctx.design, launchClock!, startCellId);
+  for (const seg of launchClkSegs) {
+    running += seg.delay;
+    const fo = seg.fanout !== undefined ? String(seg.fanout) : "";
+    const tr = seg.transition !== undefined ? fmt(seg.transition) : "";
+    const edge = seg.edge ?? "r";
+    rows.push(`  ${P(seg.description, 42)} ${R(fo, 7)} ${R(tr, 8)} ${R(fmt(seg.delay), 8)} ${R(fmt(running), 8)} ${edge}`);
+  }
+  const launchArrival = running;
+
+  // CK→Q
+  const clkQArc = startCell?.arcs.find((a) => a.sense === "positive_unate" && a.check === undefined);
+  const clkQDelay = (clkQArc?.delay ?? 0) / 1000;
+  const clkQTrans = ((clkQArc?.outputTransition ?? (clkQArc?.delay ?? 0) * 0.35) / 1000);
+  running += clkQDelay;
+  rows.push(`  ${P(from + " (" + (startCell?.type ?? "?") + ")", 42)} ${R("", 7)} ${R(fmt(clkQTrans), 8)} ${R(fmt(clkQDelay), 8)} ${R(fmt(running), 8)} r`);
+
+  // --- data path ---
   for (const seg of path.segments) {
     running += seg.delay;
-    rows.push(`  ${pad(seg.description, 40)}  ${pad(fmt(seg.delay), 10)}  ${pad(fmt(running), 10)}`);
+    const fo = seg.fanout !== undefined ? String(seg.fanout) : "";
+    const tr = seg.transition !== undefined ? fmt(seg.transition) : "";
+    const edge = seg.edge ?? "";
+    rows.push(`  ${P(seg.description, 42)} ${R(fo, 7)} ${R(tr, 8)} ${R(fmt(seg.delay), 8)} ${R(fmt(running), 8)} ${edge}`);
   }
+  rows.push(`  ${P("data arrival time", 42)} ${R("", 7)} ${R("", 8)} ${R("", 8)} ${R(fmt(path.dataArrival), 8)}`);
   rows.push("");
-  rows.push(`  ${pad("data arrival time", 40)}  ${" ".repeat(10)}  ${pad(fmt(path.dataArrival), 10)}`);
-  rows.push("");
-  rows.push(`  ${pad("data required time", 40)}  ${" ".repeat(10)}  ${pad(fmt(path.dataRequired), 10)}`);
-  rows.push(`  ${pad("slack (" + (baseSlack >= 0 ? "MET" : "VIOLATED") + ")", 40)}  ${" ".repeat(10)}  ${pad(fmt(baseSlack), 10)}`);
+
+  // --- capture clock path (expanded) ---
+  running = checkType === "setup" ? captureClock!.period : 0;
+  rows.push(`  ${P("clock " + (captureClock?.id ?? "") + " (rise edge)", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(checkType === "setup" ? captureClock!.period : 0), 8)} ${R(fmt(running), 8)}`);
+  const captureLatency = captureClock?.latency ?? 0;
+  if (captureLatency > 0) {
+    running += captureLatency;
+    rows.push(`  ${P("clock source latency", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(captureLatency), 8)} ${R(fmt(running), 8)}`);
+  }
+  const captureClkSegs = walkClockPath(ctx.design, captureClock!, endCellId);
+  for (const seg of captureClkSegs) {
+    running += seg.delay;
+    const fo = seg.fanout !== undefined ? String(seg.fanout) : "";
+    const tr = seg.transition !== undefined ? fmt(seg.transition) : "";
+    const edge = seg.edge ?? "r";
+    rows.push(`  ${P(seg.description, 42)} ${R(fo, 7)} ${R(tr, 8)} ${R(fmt(seg.delay), 8)} ${R(fmt(running), 8)} ${edge}`);
+  }
+  const captureArrival = running;
+
+  const uncertainty = captureClock?.uncertainty ?? 0;
+  const setupHoldArc = endCell?.arcs.find((a) => a.check === checkType);
+  const setupHoldTime = (setupHoldArc?.delay ?? 0) / 1000;
+
+  if (checkType === "setup") {
+    rows.push(`  ${P("clock uncertainty", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(-uncertainty), 8)} ${R(fmt(captureArrival - uncertainty), 8)}`);
+    rows.push(`  ${P("library setup time (" + (endCell?.type ?? "?") + ")", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(-setupHoldTime), 8)} ${R(fmt(captureArrival - uncertainty - setupHoldTime), 8)}`);
+    rows.push(`  ${P("data required time", 42)} ${R("", 7)} ${R("", 8)} ${R("", 8)} ${R(fmt(path.dataRequired), 8)}`);
+  } else {
+    rows.push(`  ${P("clock uncertainty", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(uncertainty), 8)} ${R(fmt(captureArrival + uncertainty), 8)}`);
+    rows.push(`  ${P("library hold time (" + (endCell?.type ?? "?") + ")", 42)} ${R("", 7)} ${R("", 8)} ${R(fmt(setupHoldTime), 8)} ${R(fmt(captureArrival + uncertainty + setupHoldTime), 8)}`);
+    rows.push(`  ${P("data required time", 42)} ${R("", 7)} ${R("", 8)} ${R("", 8)} ${R(fmt(path.dataRequired), 8)}`);
+  }
+  rows.push(`  ${"-".repeat(77)}`);
+  rows.push(`  ${P("data required time", 42)} ${R("", 7)} ${R("", 8)} ${R("", 8)} ${R(fmt(path.dataRequired), 8)}`);
+  rows.push(`  ${P("data arrival time", 42)} ${R("", 7)} ${R("", 8)} ${R("", 8)} ${R(fmt(-path.dataArrival), 8)}`);
+  rows.push(`  ${"-".repeat(77)}`);
+  rows.push(`  ${P("slack (" + (baseSlack >= 0 ? "MET" : "VIOLATED") + ")", 42)} ${R("", 7)} ${R("", 8)} ${R("", 8)} ${R(fmt(baseSlack), 8)}`);
 
   return [...header, ...rows].join("\n");
 }

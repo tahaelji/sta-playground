@@ -1,0 +1,485 @@
+{
+  "id": "06-soc-bus-complex",
+  "title": "SoC AHB-to-APB bridge — multi-issue timing closure at 800 MHz",
+  "difficulty": "expert",
+  "tags": ["setup", "clock_gating", "multicycle", "sizing", "parasitic", "advanced"],
+  "description": "# SoC AHB-to-APB bridge timing closure\n\nYou're the timing lead on a chip tapeout. The AHB-to-APB bus bridge block is failing timing at 800 MHz (1.25 ns period). The worst violation is **-310 ps** on the write-data path from `ahb_wrdata_reg[7]/Q` through the protocol state machine decode logic, through crossbar ECC logic, and into `apb_wdata_reg[3]/D`.\n\nThe synthesizer was told to pipeline this path but ran out of area budget — so the full combinational depth remains in a single cycle. Multiple factors compound:\n- The decode logic is deep (4 levels: AND → OR → NAND → INV)\n- A high-fanout net fans out to 4 loads through a weak buffer\n- Wire delays on a long route between AHB and APB flop banks are significant\n- The clock tree has asymmetric insertion delay between the two domains\n\nPost-CTS, post-route. Uncertainty is 40 ps.\n\nYou have a full command palette. There is no silver-bullet fix — you'll need to understand every contributor before choosing.\n\n**Target:** close timing with minimum PPA cost.",
+  "design": {
+    "name": "ahb2apb_bridge",
+    "cells": [
+      {
+        "id": "ahb_wrdata_reg_7", "type": "DFFRHQX4", "isSequential": true, "area": 8.2,
+        "pins": [
+          { "id": "D", "direction": "in", "capacitance": 0.003 },
+          { "id": "Q", "direction": "out" },
+          { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.005 }
+        ],
+        "arcs": [
+          { "from": "CK", "to": "Q", "delay": 165, "sense": "positive_unate", "outputTransition": 55 },
+          { "from": "D", "to": "D", "delay": 78, "sense": "non_unate", "check": "setup" },
+          { "from": "D", "to": "D", "delay": 32, "sense": "non_unate", "check": "hold" }
+        ]
+      },
+      {
+        "id": "u_decode_and2", "type": "AND2X1", "area": 2.1,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 105, "sense": "positive_unate", "outputTransition": 48 },
+          { "from": "B", "to": "Y", "delay": 108, "sense": "positive_unate", "outputTransition": 50 }
+        ]
+      },
+      {
+        "id": "u_decode_or3", "type": "OR3X1", "area": 3.2,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "C", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 145, "sense": "positive_unate", "outputTransition": 62 },
+          { "from": "B", "to": "Y", "delay": 148, "sense": "positive_unate", "outputTransition": 64 },
+          { "from": "C", "to": "Y", "delay": 152, "sense": "positive_unate", "outputTransition": 66 }
+        ]
+      },
+      {
+        "id": "u_decode_nand3", "type": "NAND3X1", "area": 2.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.004 },
+          { "id": "B", "direction": "in", "capacitance": 0.004 },
+          { "id": "C", "direction": "in", "capacitance": 0.004 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 88, "sense": "negative_unate", "outputTransition": 42, "outputEdge": "f" },
+          { "from": "B", "to": "Y", "delay": 92, "sense": "negative_unate", "outputTransition": 44, "outputEdge": "f" },
+          { "from": "C", "to": "Y", "delay": 95, "sense": "negative_unate", "outputTransition": 46, "outputEdge": "f" }
+        ]
+      },
+      {
+        "id": "u_decode_inv", "type": "INVX1", "area": 0.9,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.002 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 52, "sense": "negative_unate", "outputTransition": 28, "outputEdge": "r" }
+        ]
+      },
+      {
+        "id": "u_mux_sel", "type": "MUX2X1", "area": 3.4,
+        "pins": [
+          { "id": "I0", "direction": "in", "capacitance": 0.003 },
+          { "id": "I1", "direction": "in", "capacitance": 0.003 },
+          { "id": "S", "direction": "in", "capacitance": 0.002 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "I0", "to": "Y", "delay": 135, "sense": "positive_unate", "outputTransition": 58 },
+          { "from": "I1", "to": "Y", "delay": 138, "sense": "positive_unate", "outputTransition": 60 },
+          { "from": "S", "to": "Y", "delay": 165, "sense": "non_unate", "outputTransition": 72 }
+        ]
+      },
+      {
+        "id": "u_buf_hfn", "type": "BUFX2", "area": 1.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 78, "sense": "positive_unate", "outputTransition": 55 }
+        ]
+      },
+      {
+        "id": "u_qual_and", "type": "AND2X1", "area": 2.1,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 98, "sense": "positive_unate", "outputTransition": 45 },
+          { "from": "B", "to": "Y", "delay": 102, "sense": "positive_unate", "outputTransition": 48 }
+        ]
+      },
+      {
+        "id": "u_pipe_reg", "type": "DFFRHQX2", "isSequential": true, "area": 6.8,
+        "pins": [
+          { "id": "D", "direction": "in", "capacitance": 0.003 },
+          { "id": "Q", "direction": "out" },
+          { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+        ],
+        "arcs": [
+          { "from": "CK", "to": "Q", "delay": 175, "sense": "positive_unate", "outputTransition": 60 },
+          { "from": "D", "to": "D", "delay": 82, "sense": "non_unate", "check": "setup" },
+          { "from": "D", "to": "D", "delay": 35, "sense": "non_unate", "check": "hold" }
+        ]
+      },
+      {
+        "id": "u_xbar_xor1", "type": "XOR2X1", "area": 3.1,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 128, "sense": "non_unate", "outputTransition": 55 },
+          { "from": "B", "to": "Y", "delay": 132, "sense": "non_unate", "outputTransition": 58 }
+        ]
+      },
+      {
+        "id": "u_xbar_xor2", "type": "XOR2X1", "area": 3.1,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 125, "sense": "non_unate", "outputTransition": 53 },
+          { "from": "B", "to": "Y", "delay": 130, "sense": "non_unate", "outputTransition": 56 }
+        ]
+      },
+      {
+        "id": "u_parity_xor", "type": "XOR2X1", "area": 3.1,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 130, "sense": "non_unate", "outputTransition": 56 },
+          { "from": "B", "to": "Y", "delay": 134, "sense": "non_unate", "outputTransition": 59 }
+        ]
+      },
+      {
+        "id": "u_ecc_buf", "type": "BUFX1", "area": 1.2,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.002 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 62, "sense": "positive_unate", "outputTransition": 40 }
+        ]
+      },
+      {
+        "id": "u_final_mux", "type": "MUX2X1", "area": 3.4,
+        "pins": [
+          { "id": "I0", "direction": "in", "capacitance": 0.003 },
+          { "id": "I1", "direction": "in", "capacitance": 0.003 },
+          { "id": "S", "direction": "in", "capacitance": 0.002 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "I0", "to": "Y", "delay": 142, "sense": "positive_unate", "outputTransition": 62 },
+          { "from": "I1", "to": "Y", "delay": 148, "sense": "positive_unate", "outputTransition": 65 }
+        ]
+      },
+      {
+        "id": "apb_wdata_reg_3", "type": "DFFRHQX1", "isSequential": true, "area": 5.6,
+        "pins": [
+          { "id": "D", "direction": "in", "capacitance": 0.002 },
+          { "id": "Q", "direction": "out" },
+          { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+        ],
+        "arcs": [
+          { "from": "CK", "to": "Q", "delay": 180, "sense": "positive_unate", "outputTransition": 65 },
+          { "from": "D", "to": "D", "delay": 92, "sense": "non_unate", "check": "setup" },
+          { "from": "D", "to": "D", "delay": 38, "sense": "non_unate", "check": "hold" }
+        ]
+      },
+      {
+        "id": "u_icg", "type": "CKLNQD1", "area": 4.2,
+        "pins": [
+          { "id": "TE", "direction": "in", "capacitance": 0.003 },
+          { "id": "E", "direction": "in", "capacitance": 0.003 },
+          { "id": "CP", "direction": "in", "isClock": true, "capacitance": 0.005 },
+          { "id": "Q", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "CP", "to": "Q", "delay": 85, "sense": "positive_unate", "outputTransition": 38 }
+        ]
+      },
+      {
+        "id": "ck_buf_root", "type": "CKBUFX8", "area": 3.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.005 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [{ "from": "A", "to": "Y", "delay": 42, "sense": "positive_unate", "outputTransition": 25 }]
+      },
+      {
+        "id": "ck_buf_ahb", "type": "CKBUFX4", "area": 2.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.004 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [{ "from": "A", "to": "Y", "delay": 48, "sense": "positive_unate", "outputTransition": 30 }]
+      },
+      {
+        "id": "ck_buf_apb_1", "type": "CKBUFX4", "area": 2.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.004 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [{ "from": "A", "to": "Y", "delay": 48, "sense": "positive_unate", "outputTransition": 30 }]
+      },
+      {
+        "id": "ck_buf_apb_2", "type": "CKBUFX2", "area": 1.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [{ "from": "A", "to": "Y", "delay": 55, "sense": "positive_unate", "outputTransition": 35 }]
+      },
+      {
+        "id": "u_spare_nand", "type": "NAND2X1", "area": 1.8,
+        "pins": [
+          { "id": "A", "direction": "in", "capacitance": 0.003 },
+          { "id": "B", "direction": "in", "capacitance": 0.003 },
+          { "id": "Y", "direction": "out" }
+        ],
+        "arcs": [
+          { "from": "A", "to": "Y", "delay": 72, "sense": "negative_unate", "outputTransition": 35 },
+          { "from": "B", "to": "Y", "delay": 75, "sense": "negative_unate", "outputTransition": 37 }
+        ]
+      },
+      {
+        "id": "u_status_reg", "type": "DFFRHQX2", "isSequential": true, "area": 6.8,
+        "pins": [
+          { "id": "D", "direction": "in", "capacitance": 0.003 },
+          { "id": "Q", "direction": "out" },
+          { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+        ],
+        "arcs": [
+          { "from": "CK", "to": "Q", "delay": 175, "sense": "positive_unate", "outputTransition": 60 },
+          { "from": "D", "to": "D", "delay": 80, "sense": "non_unate", "check": "setup" },
+          { "from": "D", "to": "D", "delay": 33, "sense": "non_unate", "check": "hold" }
+        ]
+      },
+      {
+        "id": "u_fsm_reg", "type": "DFFRHQX2", "isSequential": true, "area": 6.8,
+        "pins": [
+          { "id": "D", "direction": "in", "capacitance": 0.003 },
+          { "id": "Q", "direction": "out" },
+          { "id": "CK", "direction": "in", "isClock": true, "capacitance": 0.004 }
+        ],
+        "arcs": [
+          { "from": "CK", "to": "Q", "delay": 175, "sense": "positive_unate", "outputTransition": 60 },
+          { "from": "D", "to": "D", "delay": 80, "sense": "non_unate", "check": "setup" },
+          { "from": "D", "to": "D", "delay": 33, "sense": "non_unate", "check": "hold" }
+        ]
+      }
+    ],
+    "nets": [
+      { "id": "n_ahb_wrdata_q", "driver": "ahb_wrdata_reg_7/Q", "loads": ["u_decode_and2/A"], "resistance": 52, "capacitance": 0.016, "wireDelay": 38 },
+      { "id": "n_decode_and_y", "driver": "u_decode_and2/Y", "loads": ["u_decode_or3/A"], "resistance": 45, "capacitance": 0.012, "wireDelay": 28 },
+      { "id": "n_decode_or_y", "driver": "u_decode_or3/Y", "loads": ["u_decode_nand3/A"], "resistance": 48, "capacitance": 0.014, "wireDelay": 32 },
+      { "id": "n_decode_nand_y", "driver": "u_decode_nand3/Y", "loads": ["u_decode_inv/A"], "resistance": 42, "capacitance": 0.010, "wireDelay": 24 },
+      { "id": "n_decode_inv_y", "driver": "u_decode_inv/Y", "loads": ["u_mux_sel/S"], "resistance": 40, "capacitance": 0.009, "wireDelay": 22 },
+      { "id": "n_mux_y", "driver": "u_mux_sel/Y", "loads": ["u_buf_hfn/A"], "resistance": 55, "capacitance": 0.018, "wireDelay": 42 },
+      { "id": "n_hfn_buf_y", "driver": "u_buf_hfn/Y", "loads": ["u_qual_and/A", "u_icg/E", "u_spare_nand/A", "u_status_reg/D"], "resistance": 85, "capacitance": 0.042, "wireDelay": 95 },
+      { "id": "n_qual_y", "driver": "u_qual_and/Y", "loads": ["u_xbar_xor1/A", "u_pipe_reg/D"], "resistance": 44, "capacitance": 0.014, "wireDelay": 30 },
+      { "id": "n_xbar1_y", "driver": "u_xbar_xor1/Y", "loads": ["u_xbar_xor2/A"], "resistance": 42, "capacitance": 0.011, "wireDelay": 25 },
+      { "id": "n_xbar2_y", "driver": "u_xbar_xor2/Y", "loads": ["u_parity_xor/A"], "resistance": 44, "capacitance": 0.012, "wireDelay": 28 },
+      { "id": "n_parity_y", "driver": "u_parity_xor/Y", "loads": ["u_ecc_buf/A"], "resistance": 40, "capacitance": 0.010, "wireDelay": 22 },
+      { "id": "n_ecc_buf_y", "driver": "u_ecc_buf/Y", "loads": ["u_final_mux/I0"], "resistance": 38, "capacitance": 0.009, "wireDelay": 20 },
+      { "id": "n_final_mux_y", "driver": "u_final_mux/Y", "loads": ["apb_wdata_reg_3/D"], "resistance": 72, "capacitance": 0.032, "wireDelay": 78 },
+      { "id": "clk_root", "driver": "clk", "loads": ["ck_buf_root/A"], "wireDelay": 8 },
+      { "id": "ck_root_y", "driver": "ck_buf_root/Y", "loads": ["ck_buf_ahb/A", "ck_buf_apb_1/A"], "wireDelay": 12 },
+      { "id": "ck_ahb_y", "driver": "ck_buf_ahb/Y", "loads": ["ahb_wrdata_reg_7/CK", "u_fsm_reg/CK", "u_icg/CP"], "wireDelay": 18 },
+      { "id": "ck_apb_1_y", "driver": "ck_buf_apb_1/Y", "loads": ["ck_buf_apb_2/A", "u_status_reg/CK"], "wireDelay": 15 },
+      { "id": "ck_apb_2_y", "driver": "ck_buf_apb_2/Y", "loads": ["apb_wdata_reg_3/CK"], "wireDelay": 22 },
+      { "id": "ck_gated", "driver": "u_icg/Q", "loads": ["u_pipe_reg/CK"], "wireDelay": 20 }
+    ],
+    "clocks": [
+      { "id": "clk", "period": 1.25, "source": "clk", "waveform": [0, 0.625], "uncertainty": 0.04, "latency": 0.08 }
+    ],
+    "constraints": [
+      { "kind": "false_path", "from": "u_spare_nand/Y" }
+    ],
+    "ports": [{ "id": "clk", "direction": "in" }]
+  },
+  "reportedViolation": {
+    "type": "setup",
+    "startpoint": "ahb_wrdata_reg_7/Q",
+    "endpoint": "apb_wdata_reg_3/D",
+    "slack": -0.31,
+    "summary": "setup VIOLATED (-0.310 ns) on ahb_wrdata_reg_7/Q -> apb_wdata_reg_3/D through decode + pipe + xbar + parity"
+  },
+  "validCommands": [
+    "report_timing", "report_clocks", "report_clock_network",
+    "get_cells", "get_pins", "get_nets", "report_parasitics",
+    "report_exceptions", "all_registers"
+  ],
+  "solution": {
+    "rootCauseOptions": [
+      { "id": "rc1", "label": "Three compounding factors: (1) high-fanout net n_hfn_buf_y has 95 ps wire delay from weak BUFX2 driving 4 loads at 0.042 pF, (2) n_final_mux_y has 78 ps wire delay from long routing to the APB flop bank, (3) clock insertion delay is 30 ps longer on the APB capture side due to the extra ck_buf_apb_2 stage", "correct": true },
+      { "id": "rc2", "label": "The decode logic depth (4 levels) is the sole cause", "correct": false },
+      { "id": "rc3", "label": "Clock gating cell u_icg is the bottleneck", "correct": false },
+      { "id": "rc4", "label": "Missing false_path on the write data path", "correct": false }
+    ],
+    "acceptedFixes": [
+      {
+        "id": "size_up_hfn_buf",
+        "description": "Size u_buf_hfn from BUFX2 to BUFX8 (reduces n_hfn_buf_y delay from 95 ps to ~35 ps)",
+        "category": "size_up",
+        "ppaCost": { "area": 0.04, "power": 0.03, "timing": -0.15 },
+        "slackDelta": 0.18
+      },
+      {
+        "id": "buffer_final_net",
+        "description": "Insert BUFX4 on n_final_mux_y to split the long route to APB flop bank",
+        "category": "buffer_insert",
+        "ppaCost": { "area": 0.03, "power": 0.02, "timing": -0.08 },
+        "slackDelta": 0.12
+      },
+      {
+        "id": "rebalance_cts",
+        "description": "Remove ck_buf_apb_2 and let ck_buf_apb_1 drive apb_wdata_reg_3 directly (equalizes insertion delay)",
+        "category": "useful_skew",
+        "ppaCost": { "area": -0.01, "power": -0.01, "timing": 0.0 },
+        "slackDelta": 0.08
+      },
+      {
+        "id": "size_up_decode_or",
+        "description": "Size u_decode_or3 from OR3X1 to OR3X4 (reduce from 145 ps to ~90 ps)",
+        "category": "size_up",
+        "ppaCost": { "area": 0.06, "power": 0.04, "timing": -0.06 },
+        "slackDelta": 0.07
+      }
+    ]
+  },
+  "hintTree": {
+    "nudge": "This is a multi-contributor violation. Don't look for a single bottleneck — look for two or three places where delay is abnormally high relative to the cells around them.",
+    "hint": "Check the fanout of u_buf_hfn and the parasitics on n_hfn_buf_y and n_final_mux_y. Also compare clock insertion delay at the launch vs. capture flop.",
+    "walkthrough": "Three issues compound: (1) n_hfn_buf_y is a high-fanout net (4 loads, 0.042 pF) driven by weak BUFX2 — 95 ps of wire delay; (2) n_final_mux_y is a long route to APB flops — 78 ps wire delay; (3) APB capture side has one extra CTS buffer adding ~30 ps. Fix: size up BUFX2→BUFX8 (+180 ps slack), buffer n_final_mux_y (+120 ps), rebalance CTS (+80 ps). Pick the best combo under PPA budget."
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Read the full timing report",
+      "goal": "Get the complete picture. Read every line of the path — clock expansion, data path, capture clock, slack breakdown.",
+      "suggestedCommands": [
+        "report_timing -from ahb_wrdata_reg_7/Q -to apb_wdata_reg_3/D"
+      ],
+      "checkpoint": {
+        "question": "How many levels of combinational logic are in the data path (between CK→Q and the endpoint D pin)?",
+        "options": [
+          { "id": "a", "label": "11+ stages (decode AND/OR/NAND/INV + mux + buf + qual_and + pipe_reg CK→Q + xor1 + xor2 + parity_xor + ecc_buf + final_mux)", "correct": true },
+          { "id": "b", "label": "4 stages", "correct": false },
+          { "id": "c", "label": "7 stages", "correct": false }
+        ]
+      },
+      "insight": "This path is deep — it crosses 11+ combinational stages plus a pipeline register. At 800 MHz that's a lot. But depth alone isn't the cause: you need to find which specific stages or nets contribute disproportionately."
+    },
+    {
+      "id": "s2",
+      "title": "Identify the worst net delays",
+      "goal": "Separate cell delays from wire delays. Which nets have the highest parasitic delay? Use report_parasitics on the nets that look suspicious from the timing report.",
+      "suggestedCommands": [
+        "report_parasitics -net n_hfn_buf_y",
+        "report_parasitics -net n_final_mux_y",
+        "report_parasitics -net n_mux_y"
+      ],
+      "checkpoint": {
+        "question": "Which net has the worst wire delay?",
+        "options": [
+          { "id": "a", "label": "n_hfn_buf_y at 95 ps (0.042 pF, 85 ohm) — it's a high-fanout net", "correct": true },
+          { "id": "b", "label": "n_final_mux_y at 78 ps", "correct": false },
+          { "id": "c", "label": "n_mux_y at 42 ps", "correct": false }
+        ]
+      },
+      "insight": "n_hfn_buf_y is the worst at 95 ps. It fans out to 4 loads (u_qual_and, u_icg, u_spare_nand, u_status_reg) with 0.042 pF total capacitance — but it's driven by a BUFX2 (X2 drive strength). That's a classic high-fanout bottleneck. n_final_mux_y at 78 ps is the second-worst."
+    },
+    {
+      "id": "s3",
+      "title": "Investigate the high-fanout buffer",
+      "goal": "Look at u_buf_hfn and what it drives. Is the drive strength appropriate for this fanout?",
+      "suggestedCommands": [
+        "get_cells -pattern u_buf_hfn",
+        "get_nets -pattern n_hfn*",
+        "get_pins -of_objects u_buf_hfn"
+      ],
+      "checkpoint": {
+        "question": "Why is n_hfn_buf_y so slow?",
+        "options": [
+          { "id": "a", "label": "BUFX2 is too weak to drive 4 loads totaling 0.042 pF across 85 ohm — its output transition degrades badly", "correct": true },
+          { "id": "b", "label": "The wire resistance is high but the buffer is correctly sized", "correct": false },
+          { "id": "c", "label": "One of the loads is pulling down the net", "correct": false }
+        ]
+      },
+      "insight": "BUFX2 driving 0.042 pF = terrible signal integrity. The output transition degrades to ~55 ps input but the RC of the net adds more. A BUFX8 would cut the wire delay by ~60 ps. This is the single biggest contributor."
+    },
+    {
+      "id": "s4",
+      "title": "Check the clock network asymmetry",
+      "goal": "Compare the launch clock path (to ahb_wrdata_reg_7) vs the capture clock path (to apb_wdata_reg_3). Is there insertion delay skew?",
+      "suggestedCommands": [
+        "report_clock_network -clock clk"
+      ],
+      "checkpoint": {
+        "question": "How much clock skew is there between the AHB launch flop and APB capture flop?",
+        "options": [
+          { "id": "a", "label": "~30 ps — APB side has an extra buffer (ck_buf_apb_2) adding insertion delay", "correct": true },
+          { "id": "b", "label": "Nearly zero — both sides are balanced", "correct": false },
+          { "id": "c", "label": "~100 ps — massive imbalance", "correct": false }
+        ]
+      },
+      "insight": "AHB side: clk → ck_buf_root → ck_buf_ahb → reg (~0.148 ns). APB side: clk → ck_buf_root → ck_buf_apb_1 → ck_buf_apb_2 → reg (~0.183 ns). That's ~35 ps of extra insertion delay on capture, which shifts the required time later — *helping* setup. But if you look at the numbers carefully, the APB path has more total wire delay from the extra buffer. In this design it costs you ~30 ps of effective margin."
+    },
+    {
+      "id": "s5",
+      "title": "Investigate the long route to APB flops",
+      "goal": "The n_final_mux_y net has 78 ps of wire delay. Why?",
+      "suggestedCommands": [
+        "report_parasitics -net n_final_mux_y",
+        "get_cells -pattern u_final_mux"
+      ],
+      "checkpoint": {
+        "question": "What makes n_final_mux_y worse than nearby nets?",
+        "options": [
+          { "id": "a", "label": "It's a long physical route (72 ohm, 0.032 pF) from the crossbar area to the APB flop bank — placement is the root cause", "correct": true },
+          { "id": "b", "label": "The MUX2X1 has high output impedance", "correct": false },
+          { "id": "c", "label": "Too many loads on the net", "correct": false }
+        ]
+      },
+      "insight": "This net has only 1 load but 72 ohm resistance and 0.032 pF capacitance — it's physically long. The AHB and APB domains are in different parts of the floorplan. A repeater buffer halfway along this route would cut the delay significantly."
+    },
+    {
+      "id": "s6",
+      "title": "Check timing exceptions",
+      "goal": "Are there any false_paths or multicycle_paths that should exist but don't? Or any that are masking real issues?",
+      "suggestedCommands": [
+        "report_exceptions"
+      ],
+      "checkpoint": {
+        "question": "Is the write-data path correctly constrained?",
+        "options": [
+          { "id": "a", "label": "Yes — it's a real single-cycle path. The only exception is on u_spare_nand which is a spare cell, correctly excluded.", "correct": true },
+          { "id": "b", "label": "No — this should be a multicycle path", "correct": false },
+          { "id": "c", "label": "No — there should be a false_path here", "correct": false }
+        ]
+      },
+      "insight": "The constraints are correct. This is a genuine single-cycle timing violation that needs netlist fixes — not an SDC problem. The false_path on u_spare_nand is expected (spare cells are never used functionally)."
+    },
+    {
+      "id": "s7",
+      "title": "Choose your fix strategy",
+      "goal": "You have -310 ps to close. No single fix covers it all. Rank the contributors and pick the combination with the best PPA tradeoff.",
+      "suggestedCommands": [],
+      "checkpoint": {
+        "question": "What's the most effective first fix?",
+        "options": [
+          { "id": "a", "label": "Size u_buf_hfn to BUFX8 — biggest single slack recovery (+180 ps) at modest PPA cost", "correct": true },
+          { "id": "b", "label": "Size u_decode_or3 to OR3X4 — fix the decode depth", "correct": false },
+          { "id": "c", "label": "Rebalance the clock tree first", "correct": false }
+        ]
+      },
+      "insight": "Start with the highest-ROI fix: BUFX2→BUFX8 gives +180 ps for minimal area. Then buffer n_final_mux_y for another +120 ps. That's +300 ps total — almost closing the gap. The remaining ~10 ps can come from CTS rebalance or OR3 sizing. Real timing closure is always about stacking multiple small wins."
+    }
+  ]
+}

@@ -11,7 +11,10 @@ export interface Pin {
   direction: PinDirection;
   isClock?: boolean;       // true for DFF CK pin, clock port, etc.
   capacitance?: number;    // input pin load (pF)
+  maxTransition?: number;  // ps, max allowed slew
 }
+
+export type Edge = "r" | "f";
 
 export interface TimingArc {
   from: string;            // pin id on this cell
@@ -19,6 +22,9 @@ export interface TimingArc {
   delay: number;           // ps, cell intrinsic delay
   sense: TimingSense;
   check?: CheckType;       // for setup/hold arcs on sequential cells
+  inputEdge?: Edge;        // which edge triggers this arc
+  outputEdge?: Edge;       // resulting edge
+  outputTransition?: number; // ps, output slew/transition time
 }
 
 export interface Cell {
