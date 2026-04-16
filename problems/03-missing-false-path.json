@@ -96,5 +96,69 @@
     "nudge": "You can see the path is ~1.2 ns long but the clock is 0.8 ns. Before touching the netlist, ask yourself: should this path be timed single-cycle at all?",
     "hint": "The lead said `cfg_reg` is written once at boot and read after thousands of cycles. Look at `report_exceptions` — what's currently constraining this path?",
     "walkthrough": "Run `report_exceptions` — the output is empty. This path has no false_path or multicycle_path exception. Since `cfg_reg` is quasi-static, add `set_false_path -from cfg_reg/Q -to mode_ctrl/D`. If you want belt-and-suspenders safety, a multicycle_path with a generous N also works. No netlist changes needed."
-  }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Read the timing report",
+      "goal": "Look at the failing path. How much delay is in the data path vs. the available clock period?",
+      "suggestedCommands": [
+        "report_timing -from cfg_reg/Q -to mode_ctrl/D"
+      ],
+      "checkpoint": {
+        "question": "Roughly how many clock cycles does this data path need?",
+        "options": [
+          { "id": "a", "label": "~1.5 cycles (path is ~1.2 ns, period is 0.8 ns)", "correct": true },
+          { "id": "b", "label": "Less than 1 cycle — it should easily fit", "correct": false },
+          { "id": "c", "label": "About 4 cycles", "correct": false }
+        ]
+      },
+      "insight": "The path is ~1.2 ns in a 0.8 ns clock. It can't possibly meet single-cycle timing. Before resizing anything, ask: does it *need* to be single-cycle?"
+    },
+    {
+      "id": "s2",
+      "title": "Understand the architectural context",
+      "goal": "Re-read the problem description. The team lead said something important about when cfg_reg is written and when mode_ctrl samples it.",
+      "suggestedCommands": [],
+      "checkpoint": {
+        "question": "Based on the architect's note, should this path be timed at 1 cycle?",
+        "options": [
+          { "id": "a", "label": "No — cfg_reg is written at boot and mode_ctrl reads it thousands of cycles later", "correct": true },
+          { "id": "b", "label": "Yes — every reg-to-reg path must meet single-cycle by default", "correct": false }
+        ]
+      },
+      "insight": "This is a quasi-static path — cfg_reg changes once at boot and never again during operation. The STA tool doesn't know this unless you tell it via an SDC exception."
+    },
+    {
+      "id": "s3",
+      "title": "Check existing timing exceptions",
+      "goal": "See if someone already added a false_path or multicycle_path for this path.",
+      "suggestedCommands": [
+        "report_exceptions"
+      ],
+      "checkpoint": {
+        "question": "Are there any timing exceptions defined?",
+        "options": [
+          { "id": "a", "label": "No — the exception list is empty", "correct": true },
+          { "id": "b", "label": "Yes — there's already a false_path but it's wrong", "correct": false }
+        ]
+      },
+      "insight": "Empty. This is the root cause — the tool is constraining a quasi-static path to single-cycle timing because nobody wrote the SDC exception."
+    },
+    {
+      "id": "s4",
+      "title": "Choose the right SDC fix",
+      "goal": "Decide whether to use set_false_path or set_multicycle_path. Think about what's safer.",
+      "suggestedCommands": [],
+      "checkpoint": {
+        "question": "Which approach is more appropriate here?",
+        "options": [
+          { "id": "a", "label": "set_false_path — the path is quasi-static and effectively never exercised dynamically", "correct": true },
+          { "id": "b", "label": "Resize decode_and and priority_mux to fit in one cycle", "correct": false },
+          { "id": "c", "label": "Add a buffer to n_cfg_q", "correct": false }
+        ]
+      },
+      "insight": "set_false_path is correct — this path doesn't need timing at all. A multicycle_path with a large N also works as a belt-and-suspenders approach. The key insight: not all violations need netlist changes. Some need SDC changes."
+    }
+  ]
 }

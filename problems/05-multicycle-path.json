@@ -96,5 +96,73 @@
     "nudge": "The architect gave you extra information about software behavior. That's always a hint about timing exceptions.",
     "hint": "Software issues a NOP after the multiply — meaning the result has two cycles to stabilize before the accumulator needs it. Which SDC construct captures that?",
     "walkthrough": "Run `report_exceptions` — empty. The path is ~1.53 ns long; a single cycle is 833 ps. That's ~1.83 cycles. Apply `set_multicycle_path 2 -setup -from mult_in_reg/Q -to acc_reg/D`. Always pair with `set_multicycle_path 1 -hold ...` so hold checks stay aligned. Real netlist fix (pipelining) also works but costs area and changes latency."
-  }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Read the timing report",
+      "goal": "Look at the multiplier path delay. How does it compare to the clock period?",
+      "suggestedCommands": [
+        "report_timing -from mult_in_reg/Q -to acc_reg/D"
+      ],
+      "checkpoint": {
+        "question": "How many clock cycles does this path actually need?",
+        "options": [
+          { "id": "a", "label": "~1.8 cycles (path ~1.53 ns, period 833 ps)", "correct": true },
+          { "id": "b", "label": "Less than 1 cycle", "correct": false },
+          { "id": "c", "label": "About 4 cycles", "correct": false }
+        ]
+      },
+      "insight": "The multiplier path goes through partial products (420 ps), carry-save tree (380 ps), carry-propagate adder (260 ps), plus CK→Q and wires. Total ~1.53 ns — nearly 2 full cycles at 1.2 GHz."
+    },
+    {
+      "id": "s2",
+      "title": "Examine the datapath stages",
+      "goal": "Look at each multiplier block. Are any of them unreasonably slow, or is this just a naturally long path?",
+      "suggestedCommands": [
+        "get_cells -pattern mult_*",
+        "get_cells -pattern acc_*"
+      ],
+      "checkpoint": {
+        "question": "Is resizing these blocks going to fix the violation?",
+        "options": [
+          { "id": "a", "label": "No — each block's delay is inherent to its function. A 32-bit multiply is fundamentally multi-cycle at 1.2 GHz.", "correct": true },
+          { "id": "b", "label": "Yes — sizing up mult_csa and mult_cpa will close timing", "correct": false }
+        ]
+      },
+      "insight": "MULT_PP (partial products), CSA_TREE (carry-save), CPA_32 (carry-propagate) — these are all big arithmetic blocks. Their delays are inherent to the operation. You can't size a 32-bit multiplier into a single 833 ps cycle at reasonable PPA."
+    },
+    {
+      "id": "s3",
+      "title": "Check the architectural intent",
+      "goal": "Re-read the problem description. The architect gave you critical information about software behavior.",
+      "suggestedCommands": [
+        "report_exceptions"
+      ],
+      "checkpoint": {
+        "question": "What did the architect tell you?",
+        "options": [
+          { "id": "a", "label": "Software always issues a NOP after a multiply, so the accumulator has 2 cycles to capture — and no exceptions are defined", "correct": true },
+          { "id": "b", "label": "The path should be false-pathed entirely", "correct": false },
+          { "id": "c", "label": "The design needs pipelining", "correct": false }
+        ]
+      },
+      "insight": "The NOP means acc_reg doesn't sample until cycle 2 after the multiply issues. The path has 2 full cycles — 1.67 ns — to stabilize. But STA is checking it at 1 cycle because nobody wrote the exception."
+    },
+    {
+      "id": "s4",
+      "title": "Apply the correct SDC constraint",
+      "goal": "Choose between multicycle_path and false_path. Think about what's semantically correct.",
+      "suggestedCommands": [],
+      "checkpoint": {
+        "question": "Which SDC constraint is correct?",
+        "options": [
+          { "id": "a", "label": "set_multicycle_path 2 -setup (with matching -hold 1) — the path is real but has 2 cycles", "correct": true },
+          { "id": "b", "label": "set_false_path — just exclude it entirely", "correct": false },
+          { "id": "c", "label": "No SDC change — pipeline the multiplier instead", "correct": false }
+        ]
+      },
+      "insight": "set_multicycle_path 2 is correct. Unlike a false_path (which removes *all* timing checks), multicycle keeps STA active but shifts the capture edge to cycle 2. Always pair with -hold 1 to keep hold checks aligned. This is the bread-and-butter SDC move for arithmetic datapaths."
+    }
+  ]
 }

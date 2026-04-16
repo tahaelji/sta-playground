@@ -142,5 +142,77 @@
     "nudge": "Before changing anything, look at where the delay is accumulating. Which single segment of the data path contributes the most?",
     "hint": "Compare cell delays (arcs) vs net delays. You should see one net with unusually high wire delay — investigate what's driving it and what it's feeding.",
     "walkthrough": "Run `report_timing -from state_reg_7/Q -to state_reg_3/D`. Walk the path: the sbox_mux -> sbox_lut segment has 85 ps of wire delay on n_mux_y, which is dominant. `get_nets -pattern n_mux_y` confirms high capacitance (0.028 pF). The MUX4X1 driver is too weak. Pick size_up_mux (best slack recovery) or buffer_insert (smaller PPA hit)."
-  }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Understand the violation",
+      "goal": "Read the timing report for the failing path. Identify the startpoint, endpoint, and how much slack is missing.",
+      "suggestedCommands": [
+        "report_timing -from state_reg_7/Q -to state_reg_3/D"
+      ],
+      "checkpoint": {
+        "question": "What is the data arrival time on this path?",
+        "options": [
+          { "id": "a", "label": "~1.44 ns", "correct": true },
+          { "id": "b", "label": "~0.95 ns", "correct": false },
+          { "id": "c", "label": "~0.73 ns", "correct": false }
+        ]
+      },
+      "insight": "The data arrives at ~1.44 ns but is required by ~0.96 ns. That's a 480 ps overshoot in a 1 ns clock — nearly half a cycle of excess. The path is long."
+    },
+    {
+      "id": "s2",
+      "title": "Identify the dominant delay segment",
+      "goal": "Walk the timing report line by line. Find which cell arc or net contributes the most incremental delay.",
+      "suggestedCommands": [
+        "report_parasitics -net n_mux_y",
+        "report_parasitics -net n_sbox_y"
+      ],
+      "checkpoint": {
+        "question": "Which net has the highest wire delay?",
+        "options": [
+          { "id": "a", "label": "n_mux_y (85 ps)", "correct": true },
+          { "id": "b", "label": "n_sbox_y (55 ps)", "correct": false },
+          { "id": "c", "label": "n_state7_q (35 ps)", "correct": false }
+        ]
+      },
+      "insight": "n_mux_y has 85 ps of wire delay — more than any single cell arc except sbox_lut. Its capacitance is 0.028 pF, which is 2x the next-largest net. The driver (sbox_mux MUX4X1) is struggling."
+    },
+    {
+      "id": "s3",
+      "title": "Check the clock network",
+      "goal": "Rule out clock skew as a contributing factor. Compare insertion delays at launch and capture flops.",
+      "suggestedCommands": [
+        "report_clock_network -clock clk"
+      ],
+      "checkpoint": {
+        "question": "Is clock skew a significant contributor to this violation?",
+        "options": [
+          { "id": "a", "label": "No — both flops have similar insertion delay", "correct": true },
+          { "id": "b", "label": "Yes — capture flop clock arrives much later", "correct": false }
+        ]
+      },
+      "insight": "Both state_reg_7 and state_reg_3 are on the same clock with near-zero skew. This is purely a data-path problem."
+    },
+    {
+      "id": "s4",
+      "title": "Investigate the bottleneck driver",
+      "goal": "Look at sbox_mux — the cell driving n_mux_y. Check its type and what it's driving into.",
+      "suggestedCommands": [
+        "get_cells -pattern sbox_mux",
+        "get_pins -of_objects sbox_mux",
+        "get_nets -pattern n_mux_y"
+      ],
+      "checkpoint": {
+        "question": "What's the root cause?",
+        "options": [
+          { "id": "a", "label": "MUX4X1 is too weak to drive n_mux_y's 0.028 pF load", "correct": true },
+          { "id": "b", "label": "sbox_lut has too much intrinsic delay", "correct": false },
+          { "id": "c", "label": "key_xor at the end of the chain is the bottleneck", "correct": false }
+        ]
+      },
+      "insight": "MUX4X1 (X1 drive strength) is pushing 0.028 pF across a 72-ohm wire. That R*C product creates the dominant 85 ps. Sizing up the mux or buffering the net are the canonical fixes."
+    }
+  ]
 }

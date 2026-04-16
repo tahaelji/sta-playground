@@ -96,5 +96,73 @@
     "nudge": "Pre-CTS it met hold. Post-CTS it doesn't. What changed between those two timing runs?",
     "hint": "Hold is violated when data arrives before the capture edge is ready. Check the clock network — specifically the insertion delay at each flop's clock pin.",
     "walkthrough": "Run `report_clock_network -clock clk`. scan_reg_a has insertion delay ~0.14 ns (clk → buf1 → buf2a → a); scan_reg_b has ~0.195 ns (clk → buf1 → buf2b → buf3b → b). That 55 ps skew plus the 18 ps wire on n_scan_q means data arrives before capture can latch reliably. Fix: insert a delay buffer on the data path, or rebalance the clock tree."
-  }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Read the hold timing report",
+      "goal": "Run a min-delay (hold) timing report on the failing path. Understand what hold slack means.",
+      "suggestedCommands": [
+        "report_timing -from scan_reg_a/Q -to scan_reg_b/D -delay_type min"
+      ],
+      "checkpoint": {
+        "question": "In a hold check, what goes wrong when slack is negative?",
+        "options": [
+          { "id": "a", "label": "Data arrives at the capture flop before its hold window closes — new data corrupts the previous cycle's capture", "correct": true },
+          { "id": "b", "label": "Data arrives too late for the next rising edge", "correct": false }
+        ]
+      },
+      "insight": "Hold violations mean data changes too fast — it reaches the capture flop before that flop has finished latching the previous value. This is a race condition between the data path and the clock path."
+    },
+    {
+      "id": "s2",
+      "title": "Check the data path delay",
+      "goal": "The scan wire between these two flops is very short. How much total data path delay is there?",
+      "suggestedCommands": [
+        "report_parasitics -net n_scan_q",
+        "get_cells -pattern scan_reg_*"
+      ],
+      "checkpoint": {
+        "question": "How long is the combinational data path (CK-to-Q + wire)?",
+        "options": [
+          { "id": "a", "label": "~113 ps (95 ps CK→Q + 18 ps wire)", "correct": true },
+          { "id": "b", "label": "~350 ps", "correct": false },
+          { "id": "c", "label": "~45 ps", "correct": false }
+        ]
+      },
+      "insight": "The total data delay is tiny — only ~113 ps. With no combinational logic between the flops, data races through almost instantly. This is a classic scan-chain hold setup."
+    },
+    {
+      "id": "s3",
+      "title": "Investigate the clock network",
+      "goal": "This met hold with ideal clocks but fails post-CTS. The only thing CTS changed is clock arrival times. Compare insertion delays.",
+      "suggestedCommands": [
+        "report_clock_network -clock clk"
+      ],
+      "checkpoint": {
+        "question": "What's different about the clock paths to these two flops?",
+        "options": [
+          { "id": "a", "label": "scan_reg_b has one extra buffer (clk_buf_3b) — its clock arrives ~55 ps later", "correct": true },
+          { "id": "b", "label": "Both flops have identical clock paths", "correct": false },
+          { "id": "c", "label": "scan_reg_a's clock arrives later", "correct": false }
+        ]
+      },
+      "insight": "scan_reg_a: clk → buf1 → buf2a → CK (~140 ps). scan_reg_b: clk → buf1 → buf2b → buf3b → CK (~195 ps). That extra buffer gives scan_reg_b 55 ps more insertion delay — its hold window starts later, but the data already arrived."
+    },
+    {
+      "id": "s4",
+      "title": "Connect the dots",
+      "goal": "Combine what you know: fast data path + clock skew at capture = hold problem. What's the root cause?",
+      "suggestedCommands": [],
+      "checkpoint": {
+        "question": "What's the root cause?",
+        "options": [
+          { "id": "a", "label": "Clock skew: capture clock arrives 55 ps late due to an extra CTS buffer, but the 113 ps data path is too short to absorb it", "correct": true },
+          { "id": "b", "label": "The scan flops are too weak", "correct": false },
+          { "id": "c", "label": "Clock uncertainty is too pessimistic", "correct": false }
+        ]
+      },
+      "insight": "Classic post-CTS hold violation. The fix is either slow down the data (insert a delay buffer) or speed up the capture clock (rebalance CTS). In practice, tools insert hold-fix buffers automatically — but you need to understand *why* to debug when they don't."
+    }
+  ]
 }

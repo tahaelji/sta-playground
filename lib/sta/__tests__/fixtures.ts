@@ -174,4 +174,20 @@ export const twoFlopProblem: Problem = {
     walkthrough:
       "Run report_timing from reg_a/Q to reg_b/D. Notice U2's INVX1 drives n_y2 with 0.011 pF load. Size U2 up to INVX4 or insert a buffer.",
   },
+  steps: [
+    {
+      id: "s1",
+      title: "Read the report",
+      goal: "Understand the violation",
+      suggestedCommands: ["report_timing -from reg_a/Q -to reg_b/D"],
+      checkpoint: {
+        question: "Is there a violation?",
+        options: [
+          { id: "a", label: "Yes", correct: true },
+          { id: "b", label: "No", correct: false },
+        ],
+      },
+      insight: "There is a setup violation.",
+    },
+  ],
 };

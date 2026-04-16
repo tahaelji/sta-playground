@@ -90,6 +90,18 @@ export interface HintTree {
   walkthrough: string;     // step-by-step canonical solution
 }
 
+export interface InvestigationStep {
+  id: string;
+  title: string;              // e.g. "Read the violation report"
+  goal: string;               // what the user should learn in this step
+  suggestedCommands: string[]; // pre-filled commands the user can click
+  checkpoint: {
+    question: string;
+    options: { id: string; label: string; correct: boolean }[];
+  };
+  insight: string;            // revealed after correct checkpoint answer
+}
+
 export interface Problem {
   id: string;
   title: string;
@@ -104,4 +116,5 @@ export interface Problem {
     acceptedFixes: AcceptedFix[];
   };
   hintTree: HintTree;
+  steps: InvestigationStep[];
 }
