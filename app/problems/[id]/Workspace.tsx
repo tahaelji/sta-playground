@@ -121,16 +121,22 @@ export default function Workspace({ problem }: { problem: Problem }) {
           <span className="ml-auto">{commandCount} commands</span>
         </div>
 
-        <article className="mb-6 max-w-none whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
-          {problem.description}
-        </article>
+        <details className="mb-6 group" open>
+          <summary className="cursor-pointer text-sm font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 select-none">
+            <span className="group-open:hidden">Show problem description</span>
+            <span className="hidden group-open:inline">Hide problem description</span>
+          </summary>
+          <article className="mt-3 max-w-none whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
+            {problem.description}
+          </article>
+        </details>
 
         {/* console */}
         <div className="mb-4">
           <div className="mb-1 text-xs uppercase tracking-wide text-zinc-500">Console</div>
           <div
             ref={consoleRef}
-            className="h-72 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-950 p-3 font-mono text-xs"
+            className="h-[calc(100vh-280px)] min-h-[400px] overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-950 p-3 font-mono text-xs"
           >
             {lines.map((l, i) => (
               <pre
